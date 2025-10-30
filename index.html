@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RenterPro - Rent Management System</title>
+    <title>ReterPro - Rent Management System</title>
     <!-- Load Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Use Inter font family -->
@@ -688,11 +688,22 @@
                 const isEdit = state.editData !== null;
                 title = isEdit ? 'Edit Tenant' : 'Add New Tenant';
                 
+                // --- Fix applied to ensure capacity is accurately reflected on open ---
+                // We reload here to make sure the state is fresh when the modal opens
+                loadAllData();
+                const currentTenantId = isEdit ? state.editData.id : null;
+
                 const roomOptions = state.rooms.map(room => {
-                    const currentTenants = state.tenants.filter(t => t.roomId === room.id && t.status === 'Active' && t.id !== state.editData?.id).length;
+                    // Count active tenants, EXCLUDING the current tenant if we are in edit mode
+                    const currentTenants = state.tenants.filter(t => 
+                        t.roomId === room.id && 
+                        t.status === 'Active' && 
+                        t.id !== currentTenantId
+                    ).length;
+                    
                     const isFull = currentTenants >= room.capacity;
                     const isCurrentRoom = isEdit && state.editData.roomId === room.id;
-                    const isDisabled = isFull && !isCurrentRoom;
+                    const isDisabled = isFull && !isCurrentRoom; // Disable if full AND not the room the tenant is already in
                     const isSelected = isEdit && state.editData.roomId === room.id ? 'selected' : '';
 
                     return `
@@ -802,6 +813,7 @@
 
         window.handleSaveRoom = async (e) => {
             e.preventDefault();
+            loadAllData(); // Ensure fresh state before saving
             const isEdit = state.editData !== null;
 
             const data = {
@@ -813,6 +825,7 @@
 
             await saveRoom(data, isEdit);
             closeModal();
+            // render() is called inside saveData
         };
 
         window.handleDeleteRoom = async (roomId) => {
@@ -827,10 +840,12 @@
             }
 
             await deleteRoom(roomId);
+            // render() is called inside saveData
         };
 
         window.handleSaveTenant = async (e) => {
             e.preventDefault();
+            loadAllData(); // CRITICAL: Ensure fresh state for capacity check
             const isEdit = state.editData !== null;
             
             const targetRoomId = document.getElementById('tenantRoomId').value;
@@ -840,12 +855,12 @@
             }
 
             // Capacity Check Logic
-            loadAllData(); // Ensure state is fresh
             const room = state.rooms.find(r => r.id === targetRoomId);
-            const currentTenantsInRoom = state.tenants.filter(t => t.roomId === targetRoomId && t.status === 'Active' && t.id !== state.editData?.id).length;
+            const currentTenantId = isEdit ? state.editData.id : null;
+            const currentTenantsInRoom = state.tenants.filter(t => t.roomId === targetRoomId && t.status === 'Active' && t.id !== currentTenantId).length;
 
             if (room && currentTenantsInRoom >= room.capacity) {
-                alert(`Room ${room.roomNo} is at full capacity (${room.capacity}/${room.capacity}). Cannot add or move tenant.`);
+                alert(`Room ${room.roomNo} is at full capacity (${room.capacity}/${room.capacity}). Cannot add or move tenant to this room.`);
                 return;
             }
 
@@ -858,15 +873,18 @@
 
             await saveTenant(data, isEdit);
             closeModal();
+            // render() is called inside saveData
         };
 
         window.handleDeleteTenant = async (tenantId) => {
             if (!confirm("Are you sure you want to delete this tenant?")) return; 
             await deleteTenant(tenantId);
+            // render() is called inside saveData
         };
         
         window.handleSavePayment = async (e) => {
             e.preventDefault();
+            loadAllData(); // Ensure fresh state before calculating/saving
 
             const data = {
                 tenantId: document.getElementById('paymentTenantId').value,
@@ -877,6 +895,7 @@
 
             await saveTransaction(data);
             closeModal();
+            // render() is called inside saveData
         };
 
 
