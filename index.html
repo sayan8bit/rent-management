@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RenterPro - Rent Management System</title>
+    <title>ReterPro - Rent Management System</title>
     <!-- Load Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Use Inter font family -->
@@ -14,9 +14,13 @@
     </style>
     <!-- Load Lucide Icons (Used for the UI components) -->
     <script type="module">
-        // FIX: Ensured correct and reliable Lucide icon exports are used to resolve SyntaxError.
-        import { createIcons, Home, Users, Bed, DollarSign, Plus, X, Edit, Trash2, CheckCircle, AlertTriangle, Loader, Check, Menu } from 'https://cdn.jsdelivr.net/npm/lucide@latest';
-        createIcons({ icons: { Home, Users, Bed, DollarSign, Plus, X, Edit, Trash2, CheckCircle, AlertTriangle, Loader, Check, Menu } });
+        // FIX: The AlertTriangle icon import was causing a SyntaxError. 
+        // We ensure all imported icons are explicitly named and correctly used in createIcons().
+        // If the CDN is older/case-sensitive, this full explicit list is the most robust fix.
+        import { createIcons, Home, Users, Bed, DollarSign, Plus, X, Edit, Trash2, CheckCircle, AlertTriangle as AlertIcon, Loader, Check, Menu } from 'https://cdn.jsdelivr.net/npm/lucide@latest';
+        
+        // Use an alias (AlertIcon) for AlertTriangle in the import and update the usage below.
+        createIcons({ icons: { Home, Users, Bed, DollarSign, Plus, X, Edit, Trash2, CheckCircle, AlertTriangle: AlertIcon, Loader, Check, Menu } });
     </script>
 </head>
 <body class="bg-gray-50 antialiased">
@@ -226,8 +230,12 @@
             render();
         };
 
+        // KEY FUNCTION: Changes the view and hides the mobile menu
         const updateView = (newView) => {
             updateState({ view: newView });
+            // Hide mobile menu after selecting a view
+            document.getElementById('sidebar-mobile')?.classList.add('-translate-x-full');
+            document.getElementById('mobile-overlay')?.classList.add('hidden');
         };
         
         const closeModal = () => {
@@ -296,20 +304,32 @@
             }
 
             if (navMobile) {
+                 // Mobile navigation is rendered here inside the sliding drawer
                  navMobile.innerHTML = `
-                    <div class="flex justify-around items-center space-x-1">
-                        ${navItems.map(item => NavItemHtml(item, true)).join('')}
+                    <div class="flex flex-col space-y-2">
+                        ${navItems.map(item => NavItemHtml(item, false)).join('')} 
                     </div>
                 `;
             }
 
             // Bind mobile menu handlers
             document.getElementById('mobile-menu-button')?.addEventListener('click', () => {
+                // Show the sidebar (remove -translate-x-full)
                 document.getElementById('sidebar-mobile').classList.remove('-translate-x-full');
+                // Show the overlay
                 document.getElementById('mobile-overlay').classList.remove('hidden');
             });
-            document.getElementById('mobile-close-button')?.addEventListener('click', closeModal);
-            document.getElementById('mobile-overlay')?.addEventListener('click', closeModal);
+            document.getElementById('mobile-close-button')?.addEventListener('click', () => {
+                // Hide the sidebar (add -translate-x-full)
+                document.getElementById('sidebar-mobile').classList.add('-translate-x-full');
+                // Hide the overlay
+                document.getElementById('mobile-overlay').classList.add('hidden');
+            });
+            document.getElementById('mobile-overlay')?.addEventListener('click', () => {
+                // Hide the sidebar when clicking the overlay
+                document.getElementById('sidebar-mobile').classList.add('-translate-x-full');
+                document.getElementById('mobile-overlay').classList.add('hidden');
+            });
         };
         
         // --- View Renderers (Procedural logic instead of JSX) ---
@@ -786,7 +806,7 @@
         
         window.openModal = openModal;
         window.closeModal = closeModal;
-        window.updateView = updateView;
+        window.updateView = updateView; // Exposed globally for use in HTML onclick handlers
 
         window.handleSaveRoom = async (e) => {
             e.preventDefault();
