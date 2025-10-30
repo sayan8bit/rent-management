@@ -14,26 +14,19 @@
     </style>
     <!-- Load Lucide Icons (Used for the UI components) -->
     <script type="module">
-        // FIX: Removed duplicate 'X' import and 'Close' rename, ensuring all imports are valid Lucide icon names.
+        // FIX: Ensured correct and reliable Lucide icon exports are used to resolve SyntaxError.
         import { createIcons, Home, Users, Bed, DollarSign, Plus, X, Edit, Trash2, CheckCircle, AlertTriangle, Loader, Check, Menu } from 'https://cdn.jsdelivr.net/npm/lucide@latest';
         createIcons({ icons: { Home, Users, Bed, DollarSign, Plus, X, Edit, Trash2, CheckCircle, AlertTriangle, Loader, Check, Menu } });
     </script>
 </head>
 <body class="bg-gray-50 antialiased">
 
-    <!-- Loading Screen (Initial State) -->
+    <!-- Loading Screen is now just a temporary initial view -->
     <div id="loading-screen" class="fixed inset-0 bg-gray-50 flex items-center justify-center z-50">
         <div class="flex flex-col items-center">
             <svg class="w-8 h-8 animate-spin text-indigo-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-            <p class="ml-3 text-lg font-medium text-gray-600 mt-3">Initializing Database and Authentication...</p>
+            <p class="ml-3 text-lg font-medium text-gray-600 mt-3">Loading Application...</p>
         </div>
-    </div>
-
-    <!-- Error Screen (Fallback) -->
-    <div id="error-screen" class="hidden flex-col items-center justify-center min-h-screen bg-red-50 p-4">
-        <i data-lucide="alert-triangle" class="w-8 h-8 text-red-600"></i>
-        <p id="error-message" class="ml-3 text-lg font-medium text-red-800 mt-3"></p>
-        <p class="block text-sm text-red-600 mt-2">Please ensure Firebase config is correctly provided in the environment.</p>
     </div>
 
     <!-- Main App Container -->
@@ -47,10 +40,10 @@
             <nav id="nav-desktop" class="space-y-2 flex-grow"></nav>
             <div class="mt-8 pt-4 border-t border-gray-100">
                 <p class="text-xs text-gray-400 truncate">
-                    App ID: <span id="app-id-display" class="font-mono text-gray-600"></span>
+                    App Mode: <span class="font-mono text-gray-600">Local Storage</span>
                 </p>
                 <p class="text-xs text-gray-400 truncate">
-                    User ID: <span id="user-id-display" class="font-mono text-gray-600"></span>
+                    Note: Data is saved to this browser only.
                 </p>
             </div>
         </div>
@@ -87,18 +80,14 @@
     </div>
     
     <script type="module">
-        // Import Firebase SDKs
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        // --- Local Storage Keys ---
+        const LS_KEYS = {
+            ROOMS: 'renterpro_rooms',
+            TENANTS: 'renterpro_tenants',
+            TRANSACTIONS: 'renterpro_transactions',
+        };
 
-        // --- Global Firebase Variables (Mandatory Context) ---
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-rent-manager-app-id';
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
-        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : undefined;
-
-        // --- Global State ---
-        let db, auth, userId, userPath;
+        // --- Global State (Managed locally) ---
         let state = {
             view: 'dashboard',
             rooms: [],
@@ -112,6 +101,8 @@
         
         // --- Utility Functions ---
         
+        const generateId = () => Date.now().toString(36) + Math.random().toString(36).substring(2);
+
         const calculateIndividualRent = (roomPrice, roomCapacity) => {
             if (roomCapacity && roomPrice) {
                 return (roomPrice / roomCapacity).toFixed(2);
@@ -123,7 +114,79 @@
             if (typeof amount !== 'number' || isNaN(amount)) return '₹0.00';
             return `₹${amount.toFixed(2)}`;
         };
+
+        const getLocalStorageData = (key) => {
+            try {
+                const data = localStorage.getItem(key);
+                return data ? JSON.parse(data) : [];
+            } catch (e) {
+                console.error("Error reading from localStorage:", e);
+                return [];
+            }
+        };
+
+        const setLocalStorageData = (key, data) => {
+            try {
+                localStorage.setItem(key, JSON.stringify(data));
+            } catch (e) {
+                console.error("Error writing to localStorage:", e);
+                alert("Warning: Local Storage failed to save data. Data may be lost.");
+            }
+        };
         
+        // --- Data Manipulation Functions (CRUD on Local Storage) ---
+
+        const loadAllData = () => {
+            state.rooms = getLocalStorageData(LS_KEYS.ROOMS);
+            state.tenants = getLocalStorageData(LS_KEYS.TENANTS);
+            state.transactions = getLocalStorageData(LS_KEYS.TRANSACTIONS);
+        };
+
+        const saveData = (key, newData) => {
+            setLocalStorageData(key, newData);
+            loadAllData(); // Reload all state after saving one collection
+            render();
+        };
+
+        const saveRoom = async (data, isEdit) => {
+            let rooms = getLocalStorageData(LS_KEYS.ROOMS);
+            if (isEdit) {
+                rooms = rooms.map(r => r.id === data.id ? { ...r, ...data } : r);
+            } else {
+                rooms.push({ id: generateId(), ...data });
+            }
+            saveData(LS_KEYS.ROOMS, rooms);
+        };
+
+        const deleteRoom = async (roomId) => {
+            let rooms = getLocalStorageData(LS_KEYS.ROOMS);
+            rooms = rooms.filter(r => r.id !== roomId);
+            saveData(LS_KEYS.ROOMS, rooms);
+        };
+
+        const saveTenant = async (data, isEdit) => {
+            let tenants = getLocalStorageData(LS_KEYS.TENANTS);
+            if (isEdit) {
+                tenants = tenants.map(t => t.id === data.id ? { ...t, ...data } : t);
+            } else {
+                tenants.push({ id: generateId(), status: 'Active', dateJoined: new Date().toISOString(), ...data });
+            }
+            saveData(LS_KEYS.TENANTS, tenants);
+        };
+
+        const deleteTenant = async (tenantId) => {
+            let tenants = getLocalStorageData(LS_KEYS.TENANTS);
+            tenants = tenants.filter(t => t.id !== tenantId);
+            saveData(LS_KEYS.TENANTS, tenants);
+        };
+        
+        const saveTransaction = async (data) => {
+            let transactions = getLocalStorageData(LS_KEYS.TRANSACTIONS);
+            transactions.push({ id: generateId(), paymentDate: new Date().toISOString(), ...data });
+            saveData(LS_KEYS.TRANSACTIONS, transactions);
+        };
+
+
         // --- UI Component Builders ---
 
         const Card = (title, content, iconName, colorClass = 'text-indigo-600', className = '') => `
@@ -176,6 +239,8 @@
         };
 
         const render = () => {
+            loadAllData(); // Ensure state is fresh from localStorage
+            
             const mainContent = document.getElementById('main-content');
             if (!mainContent) return;
 
@@ -322,7 +387,7 @@
 
                     ${Card('Active Tenants Summary', `<ul class="space-y-3 max-h-60 overflow-y-auto">${tenantListHtml}</ul>`, 'users', 'text-indigo-600', 'mt-8')}
                     
-                    <p class="mt-6 text-sm text-gray-500">User Path: <code class="text-xs font-mono">${userPath}</code></p>
+                    <p class="mt-6 text-sm text-gray-500">Data is stored locally in your browser and is not shared.</p>
                 </div>
             `;
         };
@@ -333,6 +398,9 @@
                 const individualRent = calculateIndividualRent(room.price, room.capacity);
                 const occupancyClass = currentTenants === room.capacity ? 'text-red-500' : 'text-green-600';
                 
+                // Escape stringified object for safe HTML attribute passing
+                const roomData = JSON.stringify(room).replace(/"/g, '&quot;'); 
+
                 return `
                     <tr class="hover:bg-gray-50 transition-colors">
                         <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${room.roomNo}</td>
@@ -345,7 +413,7 @@
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700 font-medium">${formatCurrency(room.price)}</td>
                         <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
-                            ${Button('Edit', `openModal('room', ${JSON.stringify(room).replace(/"/g, '&quot;')})`, 'yellow', 'edit', 'button', 'bg-yellow-500 hover:bg-yellow-600')}
+                            ${Button('Edit', `openModal('room', ${roomData})`, 'yellow', 'edit', 'button', 'bg-yellow-500 hover:bg-yellow-600')}
                             ${DangerButton('Delete', `handleDeleteRoom('${room.id}')`, 'trash2')}
                         </td>
                     </tr>
@@ -393,6 +461,9 @@
             const tableRows = combinedTenantData.map(tenant => {
                 const statusClass = tenant.status === 'Active' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800';
                 
+                // Escape stringified object for safe HTML attribute passing
+                const tenantData = JSON.stringify(tenant).replace(/"/g, '&quot;'); 
+
                 return `
                     <tr class="hover:bg-gray-50 transition-colors">
                         <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${tenant.name}</td>
@@ -405,7 +476,7 @@
                             </span>
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
-                            ${Button('Edit', `openModal('tenant', ${JSON.stringify(tenant).replace(/"/g, '&quot;')})`, 'yellow', 'edit', 'button', 'bg-yellow-500 hover:bg-yellow-600')}
+                            ${Button('Edit', `openModal('tenant', ${tenantData})`, 'yellow', 'edit', 'button', 'bg-yellow-500 hover:bg-yellow-600')}
                             ${DangerButton('Delete', `handleDeleteTenant('${tenant.id}')`, 'trash2')}
                         </td>
                     </tr>
@@ -720,49 +791,35 @@
         window.handleSaveRoom = async (e) => {
             e.preventDefault();
             const isEdit = state.editData !== null;
-            const roomCollectionPath = `${userPath}/rooms`;
 
             const data = {
+                id: isEdit ? state.editData.id : null,
                 roomNo: document.getElementById('roomNo').value.trim(),
                 capacity: parseInt(document.getElementById('capacity').value, 10),
                 price: parseFloat(document.getElementById('price').value),
             };
 
-            try {
-                if (isEdit) {
-                    await setDoc(doc(db, roomCollectionPath, state.editData.id), data, { merge: true });
-                } else {
-                    const newDocRef = doc(collection(db, roomCollectionPath));
-                    await setDoc(newDocRef, data);
-                }
-                closeModal();
-            } catch (e) {
-                console.error(`Error saving room:`, e);
-                alert(`Failed to save room: ${e.message}`);
-            }
+            await saveRoom(data, isEdit);
+            closeModal();
         };
 
         window.handleDeleteRoom = async (roomId) => {
             if (!confirm("Are you sure you want to delete this room? All associated tenants must be removed first.")) return;
             
+            // Re-check capacity after loading fresh state
+            loadAllData();
             const tenantsInRoom = state.tenants.filter(t => t.roomId === roomId).length;
             if (tenantsInRoom > 0) {
                 alert("Cannot delete room. It still has active tenants.");
                 return;
             }
 
-            try {
-                await deleteDoc(doc(db, `${userPath}/rooms`, roomId));
-            } catch (e) {
-                console.error("Error deleting room: ", e);
-                alert("Failed to delete room.");
-            }
+            await deleteRoom(roomId);
         };
 
         window.handleSaveTenant = async (e) => {
             e.preventDefault();
             const isEdit = state.editData !== null;
-            const tenantCollectionPath = `${userPath}/tenants`;
             
             const targetRoomId = document.getElementById('tenantRoomId').value;
             if (!targetRoomId) {
@@ -771,6 +828,7 @@
             }
 
             // Capacity Check Logic
+            loadAllData(); // Ensure state is fresh
             const room = state.rooms.find(r => r.id === targetRoomId);
             const currentTenantsInRoom = state.tenants.filter(t => t.roomId === targetRoomId && t.status === 'Active' && t.id !== state.editData?.id).length;
 
@@ -780,133 +838,44 @@
             }
 
             const data = {
+                id: isEdit ? state.editData.id : null,
                 name: document.getElementById('tenantName').value.trim(),
                 phone: document.getElementById('tenantPhone').value.trim(),
                 roomId: targetRoomId,
-                status: 'Active',
-                dateJoined: isEdit ? state.editData.dateJoined : new Date().toISOString(),
             };
 
-            try {
-                if (isEdit) {
-                    await setDoc(doc(db, tenantCollectionPath, state.editData.id), data, { merge: true });
-                } else {
-                    const newDocRef = doc(collection(db, tenantCollectionPath));
-                    await setDoc(newDocRef, data);
-                }
-                closeModal();
-            } catch (e) {
-                console.error("Error saving tenant: ", e);
-                alert(`Failed to save tenant: ${e.message}`);
-            }
+            await saveTenant(data, isEdit);
+            closeModal();
         };
 
         window.handleDeleteTenant = async (tenantId) => {
-            // NOTE: Using confirm() here instead of a custom modal as per the standard HTML single-file environment pattern
             if (!confirm("Are you sure you want to delete this tenant?")) return; 
-            try {
-                await deleteDoc(doc(db, `${userPath}/tenants`, tenantId));
-            } catch (e) {
-                console.error("Error deleting tenant: ", e);
-                alert("Failed to delete tenant.");
-            }
+            await deleteTenant(tenantId);
         };
         
         window.handleSavePayment = async (e) => {
             e.preventDefault();
-            const transactionsCollectionPath = `${userPath}/transactions`;
 
             const data = {
                 tenantId: document.getElementById('paymentTenantId').value,
                 amount: parseFloat(document.getElementById('paymentAmount').value),
                 type: document.getElementById('paymentType').value,
                 paymentMonth: document.getElementById('paymentMonth').value,
-                paymentDate: new Date().toISOString(),
             };
 
-            try {
-                const newDocRef = doc(collection(db, transactionsCollectionPath));
-                await setDoc(newDocRef, data);
-                closeModal();
-            } catch (e) {
-                console.error("Error recording transaction: ", e);
-                alert(`Failed to record transaction: ${e.message}`);
-            }
+            await saveTransaction(data);
+            closeModal();
         };
 
-
-        // --- Firebase Setup and Listeners ---
-
-        const setupRealtimeListeners = () => {
-            if (!db || !userPath) return;
-
-            const collections = {
-                'rooms': (items) => updateState({ rooms: items }),
-                'tenants': (items) => updateState({ tenants: items }),
-                'transactions': (items) => updateState({ transactions: items }),
-            };
-
-            Object.entries(collections).forEach(([name, setter]) => {
-                try {
-                    const collectionRef = collection(db, `${userPath}/${name}`);
-                    onSnapshot(collectionRef, (snapshot) => {
-                        const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                        setter(items);
-                    }, (error) => {
-                        console.error(`Error fetching ${name}:`, error);
-                    });
-                } catch (e) {
-                    console.error(`Failed to set up listener for ${name}:`, e);
-                }
-            });
-        };
-
-        const setupFirebase = async () => {
-            try {
-                if (!Object.keys(firebaseConfig).length) throw new Error("Firebase configuration is missing.");
-
-                const app = initializeApp(firebaseConfig);
-                db = getFirestore(app);
-                auth = getAuth(app);
-
-                // 1. Sign in or use existing token
-                if (initialAuthToken) {
-                    await signInWithCustomToken(auth, initialAuthToken);
-                } else {
-                    await signInAnonymously(auth);
-                }
-
-                // 2. Auth state listener
-                onAuthStateChanged(auth, (user) => {
-                    if (user) {
-                        userId = user.uid;
-                        userPath = `/artifacts/${appId}/users/${userId}`;
-                        document.getElementById('app-id-display').textContent = appId;
-                        document.getElementById('user-id-display').textContent = userId;
-
-                        // Hide loading screen, show app
-                        document.getElementById('loading-screen').classList.add('hidden');
-                        document.getElementById('app-container').classList.remove('hidden');
-
-                        setupRealtimeListeners();
-                        render();
-                    } else {
-                        // Fallback/Error case if auth fails after try
-                        document.getElementById('loading-screen').classList.add('hidden');
-                        document.getElementById('error-message').textContent = "Authentication failed. Cannot access user data path.";
-                        document.getElementById('error-screen').classList.remove('hidden');
-                    }
-                });
-            } catch (e) {
-                console.error("Firebase Setup Error:", e);
-                document.getElementById('loading-screen').classList.add('hidden');
-                document.getElementById('error-message').textContent = `Initialization failed: ${e.message}`;
-                document.getElementById('error-screen').classList.remove('hidden');
-            }
-        };
 
         // --- Initialize on Window Load ---
-        window.addEventListener('load', setupFirebase);
+        window.addEventListener('load', () => {
+            // Load initial data and render the app
+            loadAllData();
+            document.getElementById('loading-screen').classList.add('hidden');
+            document.getElementById('app-container').classList.remove('hidden');
+            render();
+        });
     </script>
 </body>
 </html>
