@@ -1,0 +1,912 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RenterPro - Rent Management System</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Use Inter font family -->
+    <style>
+        :root {
+            font-family: 'Inter', sans-serif;
+        }
+    </style>
+    <!-- Load Lucide Icons (Used for the UI components) -->
+    <script type="module">
+        // FIX: Removed duplicate 'X' import and 'Close' rename, ensuring all imports are valid Lucide icon names.
+        import { createIcons, Home, Users, Bed, DollarSign, Plus, X, Edit, Trash2, CheckCircle, AlertTriangle, Loader, Check, Menu } from 'https://cdn.jsdelivr.net/npm/lucide@latest';
+        createIcons({ icons: { Home, Users, Bed, DollarSign, Plus, X, Edit, Trash2, CheckCircle, AlertTriangle, Loader, Check, Menu } });
+    </script>
+</head>
+<body class="bg-gray-50 antialiased">
+
+    <!-- Loading Screen (Initial State) -->
+    <div id="loading-screen" class="fixed inset-0 bg-gray-50 flex items-center justify-center z-50">
+        <div class="flex flex-col items-center">
+            <svg class="w-8 h-8 animate-spin text-indigo-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+            <p class="ml-3 text-lg font-medium text-gray-600 mt-3">Initializing Database and Authentication...</p>
+        </div>
+    </div>
+
+    <!-- Error Screen (Fallback) -->
+    <div id="error-screen" class="hidden flex-col items-center justify-center min-h-screen bg-red-50 p-4">
+        <i data-lucide="alert-triangle" class="w-8 h-8 text-red-600"></i>
+        <p id="error-message" class="ml-3 text-lg font-medium text-red-800 mt-3"></p>
+        <p class="block text-sm text-red-600 mt-2">Please ensure Firebase config is correctly provided in the environment.</p>
+    </div>
+
+    <!-- Main App Container -->
+    <div id="app-container" class="hidden min-h-screen flex">
+        
+        <!-- Sidebar Navigation (Desktop) -->
+        <div id="sidebar-desktop" class="hidden md:flex w-64 bg-white shadow-2xl p-6 flex-col fixed inset-y-0 z-10">
+            <div class="text-3xl font-extrabold text-indigo-700 mb-10">
+                Renter<span class="text-gray-800">Pro</span>
+            </div>
+            <nav id="nav-desktop" class="space-y-2 flex-grow"></nav>
+            <div class="mt-8 pt-4 border-t border-gray-100">
+                <p class="text-xs text-gray-400 truncate">
+                    App ID: <span id="app-id-display" class="font-mono text-gray-600"></span>
+                </p>
+                <p class="text-xs text-gray-400 truncate">
+                    User ID: <span id="user-id-display" class="font-mono text-gray-600"></span>
+                </p>
+            </div>
+        </div>
+
+        <!-- Mobile Header (Visible on Mobile) -->
+        <div class="md:hidden fixed top-0 left-0 right-0 bg-white shadow-lg z-20 flex justify-between items-center p-3">
+            <div class="text-xl font-extrabold text-indigo-700">
+                Renter<span class="text-gray-800">Pro</span>
+            </div>
+            <button id="mobile-menu-button" class="text-gray-600 hover:text-indigo-600">
+                <i data-lucide="menu" class="w-6 h-6"></i>
+            </button>
+        </div>
+
+        <!-- Mobile Navigation Drawer (Hidden by default) -->
+        <div id="sidebar-mobile" class="fixed inset-y-0 left-0 w-64 bg-white shadow-2xl p-6 flex-col z-30 transition-transform transform -translate-x-full md:hidden">
+            <div class="flex justify-between items-center mb-6">
+                <div class="text-3xl font-extrabold text-indigo-700">Menu</div>
+                <button id="mobile-close-button" class="text-gray-600 hover:text-indigo-600">
+                    <i data-lucide="x" class="w-6 h-6"></i>
+                </button>
+            </div>
+            <nav id="nav-mobile" class="space-y-2"></nav>
+        </div>
+        <div id="mobile-overlay" class="fixed inset-0 bg-gray-900 bg-opacity-50 z-20 hidden md:hidden"></div>
+        
+        <!-- Main Content Area -->
+        <div id="main-content" class="flex-grow md:ml-64 mt-16 md:mt-0 transition-all duration-300 w-full">
+            <!-- Views will be injected here -->
+        </div>
+
+        <!-- Global Modal Container -->
+        <div id="modal-root"></div>
+    </div>
+    
+    <script type="module">
+        // Import Firebase SDKs
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // --- Global Firebase Variables (Mandatory Context) ---
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-rent-manager-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : undefined;
+
+        // --- Global State ---
+        let db, auth, userId, userPath;
+        let state = {
+            view: 'dashboard',
+            rooms: [],
+            tenants: [],
+            transactions: [],
+            // Modal State
+            isModalOpen: false,
+            modalType: null, // 'room' or 'tenant' or 'payment'
+            editData: null,
+        };
+        
+        // --- Utility Functions ---
+        
+        const calculateIndividualRent = (roomPrice, roomCapacity) => {
+            if (roomCapacity && roomPrice) {
+                return (roomPrice / roomCapacity).toFixed(2);
+            }
+            return '0.00';
+        };
+
+        const formatCurrency = (amount) => {
+            if (typeof amount !== 'number' || isNaN(amount)) return '₹0.00';
+            return `₹${amount.toFixed(2)}`;
+        };
+        
+        // --- UI Component Builders ---
+
+        const Card = (title, content, iconName, colorClass = 'text-indigo-600', className = '') => `
+            <div class="bg-white p-6 rounded-xl shadow-lg border border-gray-100 ${className}">
+                <div class="flex items-center space-x-3 mb-4">
+                    <i data-lucide="${iconName}" class="w-6 h-6 ${colorClass}"></i>
+                    <h2 class="text-xl font-semibold text-gray-800">${title}</h2>
+                </div>
+                <div>${content}</div>
+            </div>
+        `;
+
+        const Button = (text, onClick, color = 'indigo', iconName = null, type = 'button', className = '', disabled = false) => {
+            const disabledClass = disabled
+                ? 'bg-gray-400 text-gray-700 cursor-not-allowed'
+                : `bg-${color}-600 hover:bg-${color}-700 text-white shadow-md shadow-${color}-200`;
+            
+            const iconHtml = iconName ? `<i data-lucide="${iconName}" class="w-4 h-4"></i>` : '';
+            
+            return `
+                <button type="${type}" onclick="${onClick}" ${disabled ? 'disabled' : ''}
+                    class="flex items-center justify-center space-x-2 px-4 py-2 text-sm font-medium rounded-lg transition-all duration-200 ${disabledClass} ${className}">
+                    ${iconHtml}
+                    <span>${text}</span>
+                </button>
+            `;
+        };
+
+        const DangerButton = (text, onClick, iconName = null, className = '') => 
+            Button(text, onClick, 'red', iconName, 'button', `bg-red-500 hover:bg-red-600 ${className}`);
+
+
+        // --- State Management and Rendering ---
+
+        const updateState = (newState) => {
+            state = { ...state, ...newState };
+            render();
+        };
+
+        const updateView = (newView) => {
+            updateState({ view: newView });
+        };
+        
+        const closeModal = () => {
+            updateState({ isModalOpen: false, modalType: null, editData: null });
+        };
+
+        const openModal = (type, data = null) => {
+            updateState({ isModalOpen: true, modalType: type, editData: data });
+        };
+
+        const render = () => {
+            const mainContent = document.getElementById('main-content');
+            if (!mainContent) return;
+
+            // Clear main content
+            mainContent.innerHTML = '';
+
+            // Render current view
+            switch (state.view) {
+                case 'rooms': mainContent.innerHTML = renderRoomsView(); break;
+                case 'tenants': mainContent.innerHTML = renderTenantsView(); break;
+                case 'payments': mainContent.innerHTML = renderPaymentsView(); break;
+                case 'dashboard': default: mainContent.innerHTML = renderDashboardView(); break;
+            }
+            
+            // Re-initialize Lucide icons after DOM update
+            if (window.createIcons) window.createIcons();
+
+            // Render the modal
+            renderModal();
+            
+            // Update navigation active state
+            updateNav();
+        };
+
+        // --- Navigation Rendering ---
+
+        const navItems = [
+            { name: 'Dashboard', icon: 'home', target: 'dashboard' },
+            { name: 'Rooms', icon: 'bed', target: 'rooms' },
+            { name: 'Tenants', icon: 'users', target: 'tenants' },
+            { name: 'Payments', icon: 'dollar-sign', target: 'payments' },
+        ];
+
+        const NavItemHtml = (item, isMobile = false) => `
+            <a href="#" onclick="updateView('${item.target}')"
+                class="flex items-center space-x-3 px-4 py-3 rounded-xl transition-all duration-200 
+                ${state.view === item.target
+                    ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-300'
+                    : 'text-gray-600 hover:bg-gray-100'
+                } ${isMobile ? 'flex-1 text-center justify-center p-2 text-sm md:p-3' : ''}"
+            >
+                <i data-lucide="${item.icon}" class="w-6 h-6 ${isMobile ? 'md:w-6 md:h-6' : ''}"></i>
+                <span class="font-medium ${isMobile ? 'md:inline hidden' : 'inline'}">${isMobile ? item.name.replace('Dashboard', 'Dash').replace('Payments', 'Pay') : item.name}</span>
+            </a>
+        `;
+        
+        const updateNav = () => {
+            const navDesktop = document.getElementById('nav-desktop');
+            const navMobile = document.getElementById('nav-mobile');
+            
+            if (navDesktop) {
+                navDesktop.innerHTML = navItems.map(item => NavItemHtml(item, false)).join('');
+            }
+
+            if (navMobile) {
+                 navMobile.innerHTML = `
+                    <div class="flex justify-around items-center space-x-1">
+                        ${navItems.map(item => NavItemHtml(item, true)).join('')}
+                    </div>
+                `;
+            }
+
+            // Bind mobile menu handlers
+            document.getElementById('mobile-menu-button')?.addEventListener('click', () => {
+                document.getElementById('sidebar-mobile').classList.remove('-translate-x-full');
+                document.getElementById('mobile-overlay').classList.remove('hidden');
+            });
+            document.getElementById('mobile-close-button')?.addEventListener('click', closeModal);
+            document.getElementById('mobile-overlay')?.addEventListener('click', closeModal);
+        };
+        
+        // --- View Renderers (Procedural logic instead of JSX) ---
+        
+        const renderDashboardView = () => {
+            // 1. Calculations (Replicated useMemo logic)
+            const currentMonth = new Date().toISOString().substring(0, 7);
+            const totalRooms = state.rooms.length;
+            const totalCapacity = state.rooms.reduce((sum, room) => sum + (room.capacity || 0), 0);
+            const activeTenants = state.tenants.filter(t => t.status === 'Active');
+            const totalTenants = activeTenants.length;
+            const occupancyRate = totalCapacity > 0 ? ((totalTenants / totalCapacity) * 100).toFixed(1) : 0;
+            
+            let totalDue = 0;
+            let totalPaid = 0;
+            let totalElectricPaid = 0;
+
+            activeTenants.forEach(tenant => {
+                const room = state.rooms.find(r => r.id === tenant.roomId);
+                if (room) {
+                    totalDue += parseFloat(calculateIndividualRent(room.price, room.capacity));
+                }
+            });
+
+            state.transactions
+                .filter(t => t.paymentMonth === currentMonth)
+                .forEach(t => {
+                    const amount = parseFloat(t.amount || 0);
+                    if (t.type === 'Rent') {
+                        totalPaid += amount;
+                    } else if (t.type === 'Electric Bill') {
+                        totalElectricPaid += amount;
+                    }
+                });
+
+            const rentArrears = totalDue - totalPaid;
+
+            const stats = [
+                { name: 'Total Capacity', value: totalCapacity, icon: 'bed', color: 'blue' },
+                { name: 'Active Tenants', value: totalTenants, icon: 'users', color: 'indigo' },
+                { name: 'Occupancy Rate', value: `${occupancyRate}%`, icon: 'check', color: 'green' },
+                { name: `Total Rent Due (${currentMonth})`, value: formatCurrency(totalDue), icon: 'dollar-sign', color: 'orange' },
+                { name: `Total Rent Paid (${currentMonth})`, value: formatCurrency(totalPaid), icon: 'check-circle', color: 'teal' },
+                { name: 'Rent Arrears', value: formatCurrency(Math.max(0, rentArrears)), icon: 'alert-triangle', color: 'red' },
+            ];
+
+            // 2. Dashboard Stats HTML
+            const statsHtml = stats.map(stat => Card(
+                stat.name, 
+                `<p class="text-2xl md:text-4xl font-extrabold text-${stat.color}-600">${stat.value}</p>`, 
+                stat.icon,
+                `text-${stat.color}-600`, 
+                `bg-white shadow-xl hover:shadow-2xl transition-shadow duration-300`
+            )).join('');
+
+            // 3. Active Tenants Summary HTML
+            const tenantListHtml = activeTenants.length > 0 ? 
+                activeTenants.map(tenant => {
+                    const room = state.rooms.find(r => r.id === tenant.roomId);
+                    return `
+                        <li class="p-3 bg-gray-50 rounded-lg flex justify-between items-center text-gray-700">
+                            <span>${tenant.name}</span>
+                            <span class="font-semibold text-indigo-600">${room ? `Room ${room.roomNo}` : 'Unassigned'}</span>
+                        </li>
+                    `;
+                }).join('')
+                : '<p class="text-gray-500">No active tenants yet. Add a tenant to get started!</p>';
+
+            return `
+                <div class="p-6">
+                    <h1 class="text-3xl font-bold text-gray-800 mb-6">Dashboard</h1>
+                    <div class="grid grid-cols-2 lg:grid-cols-3 gap-4 lg:gap-6">
+                        ${statsHtml}
+                    </div>
+
+                    ${Card('Active Tenants Summary', `<ul class="space-y-3 max-h-60 overflow-y-auto">${tenantListHtml}</ul>`, 'users', 'text-indigo-600', 'mt-8')}
+                    
+                    <p class="mt-6 text-sm text-gray-500">User Path: <code class="text-xs font-mono">${userPath}</code></p>
+                </div>
+            `;
+        };
+
+        const renderRoomsView = () => {
+            const tableRows = state.rooms.map(room => {
+                const currentTenants = state.tenants.filter(t => t.roomId === room.id && t.status === 'Active').length;
+                const individualRent = calculateIndividualRent(room.price, room.capacity);
+                const occupancyClass = currentTenants === room.capacity ? 'text-red-500' : 'text-green-600';
+                
+                return `
+                    <tr class="hover:bg-gray-50 transition-colors">
+                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${room.roomNo}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${room.capacity}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm">
+                            <span class="font-semibold ${occupancyClass}">
+                                ${currentTenants} / ${room.capacity}
+                            </span>
+                            <span class="ml-2 text-xs text-gray-400">(${formatCurrency(parseFloat(individualRent))} / tenant)</span>
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700 font-medium">${formatCurrency(room.price)}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
+                            ${Button('Edit', `openModal('room', ${JSON.stringify(room).replace(/"/g, '&quot;')})`, 'yellow', 'edit', 'button', 'bg-yellow-500 hover:bg-yellow-600')}
+                            ${DangerButton('Delete', `handleDeleteRoom('${room.id}')`, 'trash2')}
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+            
+            const tableContent = state.rooms.length > 0 ? `
+                <div class="overflow-x-auto">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead>
+                            <tr class="bg-gray-50">
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Room No.</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Capacity</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Occupancy</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Monthly Price</th>
+                                <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody class="bg-white divide-y divide-gray-200">
+                            ${tableRows}
+                        </tbody>
+                    </table>
+                </div>
+            ` : '<p class="text-center py-8 text-gray-500">No rooms created yet.</p>';
+
+
+            return `
+                <div class="p-6">
+                    <div class="flex justify-between items-center mb-6">
+                        <h1 class="text-3xl font-bold text-gray-800">Room Management</h1>
+                        ${Button('Add New Room', "openModal('room')", 'indigo', 'plus')}
+                    </div>
+                    ${Card('Room List', tableContent)}
+                </div>
+            `;
+        };
+        
+        const renderTenantsView = () => {
+            const combinedTenantData = state.tenants.map(tenant => {
+                const room = state.rooms.find(r => r.id === tenant.roomId);
+                const rent = room ? calculateIndividualRent(room.price, room.capacity) : '0.00';
+                return { ...tenant, roomNo: room ? room.roomNo : 'Unassigned', monthlyRent: rent };
+            }).sort((a, b) => a.roomNo.localeCompare(b.roomNo));
+            
+            const tableRows = combinedTenantData.map(tenant => {
+                const statusClass = tenant.status === 'Active' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800';
+                
+                return `
+                    <tr class="hover:bg-gray-50 transition-colors">
+                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${tenant.name}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm font-semibold text-indigo-600">${tenant.roomNo}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${tenant.phone}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700 font-medium">${formatCurrency(parseFloat(tenant.monthlyRent))}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm">
+                            <span class="inline-flex px-2 text-xs font-semibold leading-5 rounded-full ${statusClass}">
+                                ${tenant.status}
+                            </span>
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
+                            ${Button('Edit', `openModal('tenant', ${JSON.stringify(tenant).replace(/"/g, '&quot;')})`, 'yellow', 'edit', 'button', 'bg-yellow-500 hover:bg-yellow-600')}
+                            ${DangerButton('Delete', `handleDeleteTenant('${tenant.id}')`, 'trash2')}
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+            
+            const tableContent = combinedTenantData.length > 0 ? `
+                <div class="overflow-x-auto">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead>
+                            <tr class="bg-gray-50">
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Room No.</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Contact</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Monthly Rent</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                                <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody class="bg-white divide-y divide-gray-200">
+                            ${tableRows}
+                        </tbody>
+                    </table>
+                </div>
+            ` : '<p class="text-center py-8 text-gray-500">No tenants added yet.</p>';
+
+
+            return `
+                <div class="p-6">
+                    <div class="flex justify-between items-center mb-6">
+                        <h1 class="text-3xl font-bold text-gray-800">Tenant Management</h1>
+                        ${Button('Add New Tenant', "openModal('tenant')", 'indigo', 'plus')}
+                    </div>
+                    ${Card('Tenant List', tableContent)}
+                </div>
+            `;
+        };
+        
+        const renderPaymentsView = () => {
+             // 1. Tenant Financial Summary (Replicating useMemo)
+            const currentMonth = new Date().toISOString().substring(0, 7);
+
+            const tenantSummary = state.tenants.map(tenant => {
+                const room = state.rooms.find(r => r.id === tenant.roomId);
+                const individualRent = room ? parseFloat(calculateIndividualRent(room.price, room.capacity)) : 0;
+                
+                const payments = state.transactions.filter(t => t.tenantId === tenant.id);
+
+                const rentPaidThisMonth = payments
+                    .filter(t => t.type === 'Rent' && t.paymentMonth === currentMonth)
+                    .reduce((sum, t) => sum + parseFloat(t.amount || 0), 0);
+                
+                const rentBalance = individualRent - rentPaidThisMonth;
+
+                const electricPaidThisMonth = payments
+                    .filter(t => t.type === 'Electric Bill' && t.paymentMonth === currentMonth)
+                    .reduce((sum, t) => sum + parseFloat(t.amount || 0), 0);
+                
+                return {
+                    ...tenant,
+                    roomNo: room ? room.roomNo : 'N/A',
+                    rentDue: individualRent,
+                    rentPaidThisMonth,
+                    rentBalance,
+                    electricPaidThisMonth,
+                };
+            }).sort((a, b) => a.roomNo.localeCompare(b.roomNo));
+            
+            // Summary Table
+            const summaryRows = tenantSummary.map(tenant => `
+                <tr class="hover:bg-gray-50 transition-colors">
+                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                        ${tenant.name}
+                        <span class="block text-xs text-gray-500">Room ${tenant.roomNo}</span>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-indigo-600 font-medium">${formatCurrency(tenant.rentDue)}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-green-600 font-medium">${formatCurrency(tenant.rentPaidThisMonth)}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm font-bold">
+                        <span class="${tenant.rentBalance > 0 ? 'text-red-500' : 'text-green-600'}">
+                            ${formatCurrency(tenant.rentBalance)}
+                        </span>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700 font-medium">${formatCurrency(tenant.electricPaidThisMonth)}</td>
+                </tr>
+            `).join('');
+            
+            const summaryTableContent = tenantSummary.length > 0 ? `
+                <div class="overflow-x-auto">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead>
+                            <tr class="bg-gray-50">
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tenant / Room</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Rent Due</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Rent Paid</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Rent Balance (Due/Overpaid)</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Electric Paid (This Month)</th>
+                            </tr>
+                        </thead>
+                        <tbody class="bg-white divide-y divide-gray-200">
+                            ${summaryRows}
+                        </tbody>
+                    </table>
+                </div>
+            ` : '<p class="text-center py-8 text-gray-500">No tenants to track finances for.</p>';
+
+
+            // Recent Transactions Table
+            const transactionRows = state.transactions
+                .sort((a, b) => new Date(b.paymentDate) - new Date(a.paymentDate))
+                .slice(0, 10)
+                .map(t => {
+                    const tenant = state.tenants.find(tnt => tnt.id === t.tenantId);
+                    const typeClass = t.type === 'Rent' ? 'bg-indigo-100 text-indigo-800' : 'bg-yellow-100 text-yellow-800';
+                    return `
+                        <tr class="hover:bg-gray-50 transition-colors">
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${new Date(t.paymentDate).toLocaleDateString()}</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${tenant ? tenant.name : 'Unknown'}</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm">
+                                <span class="inline-flex px-2 text-xs font-semibold leading-5 rounded-full ${typeClass}">
+                                    ${t.type}
+                                </span>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm font-bold text-green-700">${formatCurrency(t.amount)}</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${t.paymentMonth}</td>
+                        </tr>
+                    `;
+                }).join('');
+
+            const transactionsTableContent = state.transactions.length > 0 ? `
+                <div class="overflow-x-auto">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead>
+                            <tr class="bg-gray-50">
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tenant</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Amount</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">For Month</th>
+                            </tr>
+                        </thead>
+                        <tbody class="bg-white divide-y divide-gray-200">
+                            ${transactionRows}
+                        </tbody>
+                    </table>
+                </div>
+            ` : '<p class="text-center py-8 text-gray-500">No transactions recorded yet.</p>';
+            
+            return `
+                <div class="p-6">
+                    <div class="flex justify-between items-center mb-6">
+                        <h1 class="text-3xl font-bold text-gray-800">Financial Tracking</h1>
+                        ${Button('Record Payment/Bill', "openModal('payment')", 'indigo', 'plus')}
+                    </div>
+                    ${Card('Tenant Financial Summary (Current Month)', summaryTableContent)}
+                    ${Card('Recent Transactions', transactionsTableContent, 'dollar-sign', 'text-gray-600', 'mt-8')}
+                </div>
+            `;
+        };
+        
+        // --- Modal Rendering ---
+        
+        const renderModal = () => {
+            const modalRoot = document.getElementById('modal-root');
+            if (!state.isModalOpen || !modalRoot) {
+                modalRoot.innerHTML = '';
+                return;
+            }
+
+            let title, formContent;
+
+            if (state.modalType === 'room') {
+                const isEdit = state.editData !== null;
+                title = isEdit ? 'Edit Room' : 'Add New Room';
+                formContent = `
+                    <form onsubmit="handleSaveRoom(event)">
+                        <div class="space-y-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700">Room Number</label>
+                                <input type="text" id="roomNo" value="${isEdit ? state.editData.roomNo : ''}" required class="mt-1 block w-full border border-gray-300 rounded-lg shadow-sm p-2 focus:ring-indigo-500 focus:border-indigo-500" />
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700">Capacity (Max Tenants)</label>
+                                <input type="number" id="capacity" value="${isEdit ? state.editData.capacity : ''}" min="1" required class="mt-1 block w-full border border-gray-300 rounded-lg shadow-sm p-2 focus:ring-indigo-500 focus:border-indigo-500" />
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700">Monthly Price (₹)</label>
+                                <input type="number" id="price" value="${isEdit ? state.editData.price : ''}" min="0.01" step="0.01" required class="mt-1 block w-full border border-gray-300 rounded-lg shadow-sm p-2 focus:ring-indigo-500 focus:border-indigo-500" />
+                            </div>
+                        </div>
+                        <div class="mt-6 flex justify-end space-x-3">
+                            ${Button('Cancel', 'closeModal()', 'gray', null, 'button', 'bg-gray-200 text-gray-700 hover:bg-gray-300 shadow-none')}
+                            ${Button(isEdit ? 'Save Changes' : 'Create Room', '', 'indigo', null, 'submit')}
+                        </div>
+                    </form>
+                `;
+            } else if (state.modalType === 'tenant') {
+                const isEdit = state.editData !== null;
+                title = isEdit ? 'Edit Tenant' : 'Add New Tenant';
+                
+                const roomOptions = state.rooms.map(room => {
+                    const currentTenants = state.tenants.filter(t => t.roomId === room.id && t.status === 'Active' && t.id !== state.editData?.id).length;
+                    const isFull = currentTenants >= room.capacity;
+                    const isCurrentRoom = isEdit && state.editData.roomId === room.id;
+                    const isDisabled = isFull && !isCurrentRoom;
+                    const isSelected = isEdit && state.editData.roomId === room.id ? 'selected' : '';
+
+                    return `
+                        <option value="${room.id}" ${isSelected} ${isDisabled ? 'disabled' : ''}>
+                            ${room.roomNo} (Occupancy: ${currentTenants}/${room.capacity}) ${isDisabled ? ' - FULL' : ''}
+                        </option>
+                    `;
+                }).join('');
+                
+                formContent = `
+                    <form onsubmit="handleSaveTenant(event)">
+                        <div class="space-y-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700">Tenant Name</label>
+                                <input type="text" id="tenantName" value="${isEdit ? state.editData.name : ''}" required class="mt-1 block w-full border border-gray-300 rounded-lg shadow-sm p-2 focus:ring-indigo-500 focus:border-indigo-500" />
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700">Phone/Contact</label>
+                                <input type="text" id="tenantPhone" value="${isEdit ? state.editData.phone : ''}" required class="mt-1 block w-full border border-gray-300 rounded-lg shadow-sm p-2 focus:ring-indigo-500 focus:border-indigo-500" />
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700">Assign Room</label>
+                                <select id="tenantRoomId" required class="mt-1 block w-full border border-gray-300 rounded-lg shadow-sm p-2 focus:ring-indigo-500 focus:border-indigo-500 bg-white">
+                                    <option value="">-- Select Room --</option>
+                                    ${roomOptions}
+                                </select>
+                                ${state.rooms.length === 0 ? '<p class="mt-1 text-xs text-red-500">Please create a room first.</p>' : ''}
+                            </div>
+                        </div>
+                        <div class="mt-6 flex justify-end space-x-3">
+                            ${Button('Cancel', 'closeModal()', 'gray', null, 'button', 'bg-gray-200 text-gray-700 hover:bg-gray-300 shadow-none')}
+                            ${Button(isEdit ? 'Save Changes' : 'Create Tenant', '', 'indigo', null, 'submit')}
+                        </div>
+                    </form>
+                `;
+            } else if (state.modalType === 'payment') {
+                title = 'Record New Transaction';
+                const currentMonthValue = new Date().toISOString().substring(0, 7);
+
+                const tenantOptions = state.tenants.filter(t => t.status === 'Active').map(t => `
+                    <option value="${t.id}">${t.name}</option>
+                `).join('');
+
+                formContent = `
+                    <form onsubmit="handleSavePayment(event)">
+                        <div class="space-y-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700">Tenant</label>
+                                <select id="paymentTenantId" required class="mt-1 block w-full border border-gray-300 rounded-lg shadow-sm p-2 focus:ring-indigo-500 focus:border-indigo-500 bg-white">
+                                    <option value="">-- Select Tenant --</option>
+                                    ${tenantOptions}
+                                </select>
+                                ${state.tenants.filter(t => t.status === 'Active').length === 0 ? '<p class="mt-1 text-xs text-red-500">No active tenants.</p>' : ''}
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700">Payment Type</label>
+                                <select id="paymentType" required class="mt-1 block w-full border border-gray-300 rounded-lg shadow-sm p-2 focus:ring-indigo-500 focus:border-indigo-500 bg-white">
+                                    <option value="Rent">Rent</option>
+                                    <option value="Electric Bill">Electric Bill</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700">Amount Paid (₹)</label>
+                                <input type="number" id="paymentAmount" min="0.01" step="0.01" required class="mt-1 block w-full border border-gray-300 rounded-lg shadow-sm p-2 focus:ring-indigo-500 focus:border-indigo-500" />
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700">For Month (YYYY-MM)</label>
+                                <input type="month" id="paymentMonth" value="${currentMonthValue}" required class="mt-1 block w-full border border-gray-300 rounded-lg shadow-sm p-2 focus:ring-indigo-500 focus:border-indigo-500" />
+                            </div>
+                        </div>
+                        <div class="mt-6 flex justify-end space-x-3">
+                            ${Button('Cancel', 'closeModal()', 'gray', null, 'button', 'bg-gray-200 text-gray-700 hover:bg-gray-300 shadow-none')}
+                            ${Button('Record Payment', '', 'indigo', null, 'submit')}
+                        </div>
+                    </form>
+                `;
+            }
+
+            modalRoot.innerHTML = `
+                <div class="fixed inset-0 bg-gray-900 bg-opacity-75 z-50 flex items-center justify-center p-4" onclick="closeModal()">
+                    <div class="bg-white rounded-xl max-w-lg w-full p-6 shadow-2xl transform transition-all duration-300 scale-100" onclick="(e) => e.stopPropagation()">
+                        <div class="flex justify-between items-center pb-3 border-b border-gray-200">
+                            <h3 class="text-2xl font-bold text-gray-800">${title}</h3>
+                            <button onclick="closeModal()" class="text-gray-400 hover:text-gray-600">
+                                <i data-lucide="x" class="w-6 h-6"></i>
+                            </button>
+                        </div>
+                        <div class="py-4">
+                            ${formContent}
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            // Re-initialize Lucide icons within the modal
+            if (window.createIcons) window.createIcons();
+            
+            // Re-bind click handlers for modal content after it's injected
+            document.querySelector('#modal-root > div > div').addEventListener('click', (e) => e.stopPropagation());
+        };
+
+        // --- CRUD Logic (Global Functions bound to window) ---
+        
+        window.openModal = openModal;
+        window.closeModal = closeModal;
+        window.updateView = updateView;
+
+        window.handleSaveRoom = async (e) => {
+            e.preventDefault();
+            const isEdit = state.editData !== null;
+            const roomCollectionPath = `${userPath}/rooms`;
+
+            const data = {
+                roomNo: document.getElementById('roomNo').value.trim(),
+                capacity: parseInt(document.getElementById('capacity').value, 10),
+                price: parseFloat(document.getElementById('price').value),
+            };
+
+            try {
+                if (isEdit) {
+                    await setDoc(doc(db, roomCollectionPath, state.editData.id), data, { merge: true });
+                } else {
+                    const newDocRef = doc(collection(db, roomCollectionPath));
+                    await setDoc(newDocRef, data);
+                }
+                closeModal();
+            } catch (e) {
+                console.error(`Error saving room:`, e);
+                alert(`Failed to save room: ${e.message}`);
+            }
+        };
+
+        window.handleDeleteRoom = async (roomId) => {
+            if (!confirm("Are you sure you want to delete this room? All associated tenants must be removed first.")) return;
+            
+            const tenantsInRoom = state.tenants.filter(t => t.roomId === roomId).length;
+            if (tenantsInRoom > 0) {
+                alert("Cannot delete room. It still has active tenants.");
+                return;
+            }
+
+            try {
+                await deleteDoc(doc(db, `${userPath}/rooms`, roomId));
+            } catch (e) {
+                console.error("Error deleting room: ", e);
+                alert("Failed to delete room.");
+            }
+        };
+
+        window.handleSaveTenant = async (e) => {
+            e.preventDefault();
+            const isEdit = state.editData !== null;
+            const tenantCollectionPath = `${userPath}/tenants`;
+            
+            const targetRoomId = document.getElementById('tenantRoomId').value;
+            if (!targetRoomId) {
+                alert("Please select a room.");
+                return;
+            }
+
+            // Capacity Check Logic
+            const room = state.rooms.find(r => r.id === targetRoomId);
+            const currentTenantsInRoom = state.tenants.filter(t => t.roomId === targetRoomId && t.status === 'Active' && t.id !== state.editData?.id).length;
+
+            if (room && currentTenantsInRoom >= room.capacity) {
+                alert(`Room ${room.roomNo} is at full capacity (${room.capacity}/${room.capacity}). Cannot add or move tenant.`);
+                return;
+            }
+
+            const data = {
+                name: document.getElementById('tenantName').value.trim(),
+                phone: document.getElementById('tenantPhone').value.trim(),
+                roomId: targetRoomId,
+                status: 'Active',
+                dateJoined: isEdit ? state.editData.dateJoined : new Date().toISOString(),
+            };
+
+            try {
+                if (isEdit) {
+                    await setDoc(doc(db, tenantCollectionPath, state.editData.id), data, { merge: true });
+                } else {
+                    const newDocRef = doc(collection(db, tenantCollectionPath));
+                    await setDoc(newDocRef, data);
+                }
+                closeModal();
+            } catch (e) {
+                console.error("Error saving tenant: ", e);
+                alert(`Failed to save tenant: ${e.message}`);
+            }
+        };
+
+        window.handleDeleteTenant = async (tenantId) => {
+            // NOTE: Using confirm() here instead of a custom modal as per the standard HTML single-file environment pattern
+            if (!confirm("Are you sure you want to delete this tenant?")) return; 
+            try {
+                await deleteDoc(doc(db, `${userPath}/tenants`, tenantId));
+            } catch (e) {
+                console.error("Error deleting tenant: ", e);
+                alert("Failed to delete tenant.");
+            }
+        };
+        
+        window.handleSavePayment = async (e) => {
+            e.preventDefault();
+            const transactionsCollectionPath = `${userPath}/transactions`;
+
+            const data = {
+                tenantId: document.getElementById('paymentTenantId').value,
+                amount: parseFloat(document.getElementById('paymentAmount').value),
+                type: document.getElementById('paymentType').value,
+                paymentMonth: document.getElementById('paymentMonth').value,
+                paymentDate: new Date().toISOString(),
+            };
+
+            try {
+                const newDocRef = doc(collection(db, transactionsCollectionPath));
+                await setDoc(newDocRef, data);
+                closeModal();
+            } catch (e) {
+                console.error("Error recording transaction: ", e);
+                alert(`Failed to record transaction: ${e.message}`);
+            }
+        };
+
+
+        // --- Firebase Setup and Listeners ---
+
+        const setupRealtimeListeners = () => {
+            if (!db || !userPath) return;
+
+            const collections = {
+                'rooms': (items) => updateState({ rooms: items }),
+                'tenants': (items) => updateState({ tenants: items }),
+                'transactions': (items) => updateState({ transactions: items }),
+            };
+
+            Object.entries(collections).forEach(([name, setter]) => {
+                try {
+                    const collectionRef = collection(db, `${userPath}/${name}`);
+                    onSnapshot(collectionRef, (snapshot) => {
+                        const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                        setter(items);
+                    }, (error) => {
+                        console.error(`Error fetching ${name}:`, error);
+                    });
+                } catch (e) {
+                    console.error(`Failed to set up listener for ${name}:`, e);
+                }
+            });
+        };
+
+        const setupFirebase = async () => {
+            try {
+                if (!Object.keys(firebaseConfig).length) throw new Error("Firebase configuration is missing.");
+
+                const app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+
+                // 1. Sign in or use existing token
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(auth);
+                }
+
+                // 2. Auth state listener
+                onAuthStateChanged(auth, (user) => {
+                    if (user) {
+                        userId = user.uid;
+                        userPath = `/artifacts/${appId}/users/${userId}`;
+                        document.getElementById('app-id-display').textContent = appId;
+                        document.getElementById('user-id-display').textContent = userId;
+
+                        // Hide loading screen, show app
+                        document.getElementById('loading-screen').classList.add('hidden');
+                        document.getElementById('app-container').classList.remove('hidden');
+
+                        setupRealtimeListeners();
+                        render();
+                    } else {
+                        // Fallback/Error case if auth fails after try
+                        document.getElementById('loading-screen').classList.add('hidden');
+                        document.getElementById('error-message').textContent = "Authentication failed. Cannot access user data path.";
+                        document.getElementById('error-screen').classList.remove('hidden');
+                    }
+                });
+            } catch (e) {
+                console.error("Firebase Setup Error:", e);
+                document.getElementById('loading-screen').classList.add('hidden');
+                document.getElementById('error-message').textContent = `Initialization failed: ${e.message}`;
+                document.getElementById('error-screen').classList.remove('hidden');
+            }
+        };
+
+        // --- Initialize on Window Load ---
+        window.addEventListener('load', setupFirebase);
+    </script>
+</body>
+</html>
