@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ReterPro - Rent Management System</title>
+    <title>RenterPro - Rent Management System</title>
     <!-- Load Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Use Inter font family -->
@@ -15,11 +15,10 @@
     <!-- Load Lucide Icons (Used for the UI components) -->
     <script type="module">
         // FIX: The AlertTriangle icon import was causing a SyntaxError. 
-        // We ensure all imported icons are explicitly named and correctly used in createIcons().
-        // If the CDN is older/case-sensitive, this full explicit list is the most robust fix.
+        // We use aliasing and ensure all icons are correctly mapped.
         import { createIcons, Home, Users, Bed, DollarSign, Plus, X, Edit, Trash2, CheckCircle, AlertTriangle as AlertIcon, Loader, Check, Menu } from 'https://cdn.jsdelivr.net/npm/lucide@latest';
         
-        // Use an alias (AlertIcon) for AlertTriangle in the import and update the usage below.
+        // Ensure all icons, including the aliased one, are passed to createIcons with their correct data-lucide name.
         createIcons({ icons: { Home, Users, Bed, DollarSign, Plus, X, Edit, Trash2, CheckCircle, AlertTriangle: AlertIcon, Loader, Check, Menu } });
     </script>
 </head>
@@ -36,7 +35,7 @@
     <!-- Main App Container -->
     <div id="app-container" class="hidden min-h-screen flex">
         
-        <!-- Sidebar Navigation (Desktop) -->
+        <!-- Sidebar Navigation (Desktop - Unchanged) -->
         <div id="sidebar-desktop" class="hidden md:flex w-64 bg-white shadow-2xl p-6 flex-col fixed inset-y-0 z-10">
             <div class="text-3xl font-extrabold text-indigo-700 mb-10">
                 Renter<span class="text-gray-800">Pro</span>
@@ -52,30 +51,21 @@
             </div>
         </div>
 
-        <!-- Mobile Header (Visible on Mobile) -->
-        <div class="md:hidden fixed top-0 left-0 right-0 bg-white shadow-lg z-20 flex justify-between items-center p-3">
+        <!-- Mobile Header (Hidden as we use bottom bar for nav, but kept for title) -->
+        <div class="md:hidden fixed top-0 left-0 right-0 bg-white shadow-lg z-20 flex justify-center items-center p-3">
             <div class="text-xl font-extrabold text-indigo-700">
                 Renter<span class="text-gray-800">Pro</span>
             </div>
-            <button id="mobile-menu-button" class="text-gray-600 hover:text-indigo-600">
-                <i data-lucide="menu" class="w-6 h-6"></i>
-            </button>
         </div>
 
-        <!-- Mobile Navigation Drawer (Hidden by default) -->
-        <div id="sidebar-mobile" class="fixed inset-y-0 left-0 w-64 bg-white shadow-2xl p-6 flex-col z-30 transition-transform transform -translate-x-full md:hidden">
-            <div class="flex justify-between items-center mb-6">
-                <div class="text-3xl font-extrabold text-indigo-700">Menu</div>
-                <button id="mobile-close-button" class="text-gray-600 hover:text-indigo-600">
-                    <i data-lucide="x" class="w-6 h-6"></i>
-                </button>
-            </div>
-            <nav id="nav-mobile" class="space-y-2"></nav>
+        <!-- *NEW* FIXED BOTTOM NAVIGATION BAR (Mobile Only) -->
+        <div id="nav-mobile-bottom" class="fixed bottom-0 left-0 right-0 bg-white shadow-2xl border-t border-gray-100 p-2 z-30 md:hidden">
+            <nav id="nav-mobile" class="flex justify-around items-center space-x-1"></nav>
         </div>
-        <div id="mobile-overlay" class="fixed inset-0 bg-gray-900 bg-opacity-50 z-20 hidden md:hidden"></div>
         
         <!-- Main Content Area -->
-        <div id="main-content" class="flex-grow md:ml-64 mt-16 md:mt-0 transition-all duration-300 w-full">
+        <!-- Adjusted mt-16 for top header, and pb-16 to leave space for the bottom nav bar -->
+        <div id="main-content" class="flex-grow md:ml-64 mt-16 md:mt-0 pb-16 transition-all duration-300 w-full"> 
             <!-- Views will be injected here -->
         </div>
 
@@ -230,12 +220,10 @@
             render();
         };
 
-        // KEY FUNCTION: Changes the view and hides the mobile menu
+        // KEY FUNCTION: Changes the view 
         const updateView = (newView) => {
             updateState({ view: newView });
-            // Hide mobile menu after selecting a view
-            document.getElementById('sidebar-mobile')?.classList.add('-translate-x-full');
-            document.getElementById('mobile-overlay')?.classList.add('hidden');
+            // NOTE: Removed mobile menu hiding logic as the sidebar is now gone.
         };
         
         const closeModal = () => {
@@ -282,18 +270,42 @@
             { name: 'Payments', icon: 'dollar-sign', target: 'payments' },
         ];
 
-        const NavItemHtml = (item, isMobile = false) => `
-            <a href="#" onclick="updateView('${item.target}')"
-                class="flex items-center space-x-3 px-4 py-3 rounded-xl transition-all duration-200 
-                ${state.view === item.target
-                    ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-300'
-                    : 'text-gray-600 hover:bg-gray-100'
-                } ${isMobile ? 'flex-1 text-center justify-center p-2 text-sm md:p-3' : ''}"
-            >
-                <i data-lucide="${item.icon}" class="w-6 h-6 ${isMobile ? 'md:w-6 md:h-6' : ''}"></i>
-                <span class="font-medium ${isMobile ? 'md:inline hidden' : 'inline'}">${isMobile ? item.name.replace('Dashboard', 'Dash').replace('Payments', 'Pay') : item.name}</span>
-            </a>
-        `;
+        // Renders a navigation item (used for both desktop and mobile bottom bar)
+        const NavItemHtml = (item, isMobileBottomBar = false) => {
+            const isActive = state.view === item.target;
+            
+            const baseClasses = "flex items-center space-x-3 px-4 py-3 rounded-xl transition-all duration-200";
+            
+            let classes = isActive
+                ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-300'
+                : 'text-gray-600 hover:bg-gray-100';
+
+            let content;
+            
+            if (isMobileBottomBar) {
+                // Mobile Bottom Bar specific styling: small text, icon on top, centered
+                // We use the 'AlertTriangle' icon via its alias 'AlertIcon' here.
+                const activeClasses = isActive ? 'text-indigo-600' : 'text-gray-500 hover:text-indigo-600';
+                classes = `flex-col text-xs space-y-1 py-1 px-1 flex-1 transition-colors duration-200 ${activeClasses}`;
+                content = `
+                    <i data-lucide="${item.icon === 'alert-triangle' ? 'alert-triangle' : item.icon}" class="w-5 h-5"></i>
+                    <span class="font-medium">${item.name}</span>
+                `;
+            } else {
+                 // Desktop Sidebar specific styling: icon and text inline
+                classes = `${baseClasses} ${classes}`;
+                content = `
+                    <i data-lucide="${item.icon === 'alert-triangle' ? 'alert-triangle' : item.icon}" class="w-6 h-6"></i>
+                    <span class="font-medium">${item.name}</span>
+                `;
+            }
+
+            return `
+                <a href="#" onclick="updateView('${item.target}')" class="${classes}">
+                    ${content}
+                </a>
+            `;
+        };
         
         const updateNav = () => {
             const navDesktop = document.getElementById('nav-desktop');
@@ -304,32 +316,11 @@
             }
 
             if (navMobile) {
-                 // Mobile navigation is rendered here inside the sliding drawer
-                 navMobile.innerHTML = `
-                    <div class="flex flex-col space-y-2">
-                        ${navItems.map(item => NavItemHtml(item, false)).join('')} 
-                    </div>
-                `;
+                 // Mobile navigation (bottom bar)
+                 navMobile.innerHTML = navItems.map(item => NavItemHtml(item, true)).join(''); 
             }
-
-            // Bind mobile menu handlers
-            document.getElementById('mobile-menu-button')?.addEventListener('click', () => {
-                // Show the sidebar (remove -translate-x-full)
-                document.getElementById('sidebar-mobile').classList.remove('-translate-x-full');
-                // Show the overlay
-                document.getElementById('mobile-overlay').classList.remove('hidden');
-            });
-            document.getElementById('mobile-close-button')?.addEventListener('click', () => {
-                // Hide the sidebar (add -translate-x-full)
-                document.getElementById('sidebar-mobile').classList.add('-translate-x-full');
-                // Hide the overlay
-                document.getElementById('mobile-overlay').classList.add('hidden');
-            });
-            document.getElementById('mobile-overlay')?.addEventListener('click', () => {
-                // Hide the sidebar when clicking the overlay
-                document.getElementById('sidebar-mobile').classList.add('-translate-x-full');
-                document.getElementById('mobile-overlay').classList.add('hidden');
-            });
+            
+            // NOTE: Removed all mobile menu button/overlay handlers as they are no longer needed.
         };
         
         // --- View Renderers (Procedural logic instead of JSX) ---
@@ -373,7 +364,8 @@
                 { name: 'Occupancy Rate', value: `${occupancyRate}%`, icon: 'check', color: 'green' },
                 { name: `Total Rent Due (${currentMonth})`, value: formatCurrency(totalDue), icon: 'dollar-sign', color: 'orange' },
                 { name: `Total Rent Paid (${currentMonth})`, value: formatCurrency(totalPaid), icon: 'check-circle', color: 'teal' },
-                { name: 'Rent Arrears', value: formatCurrency(Math.max(0, rentArrears)), icon: 'alert-triangle', color: 'red' },
+                // Use the data-lucide name 'alert-triangle'
+                { name: 'Rent Arrears', value: formatCurrency(Math.max(0, rentArrears)), icon: 'alert-triangle', color: 'red' }, 
             ];
 
             // 2. Dashboard Stats HTML
